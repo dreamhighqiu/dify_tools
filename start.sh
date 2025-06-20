@@ -78,7 +78,7 @@ install_dependencies() {
 # 检查环境变量
 check_env() {
     print_info "检查环境配置..."
-    
+
     if [[ ! -f ".env" ]]; then
         if [[ -f ".env.example" ]]; then
             print_warning ".env 文件不存在，从 .env.example 复制..."
@@ -91,6 +91,63 @@ check_env() {
     else
         print_success "环境配置文件存在"
     fi
+}
+
+# 检查并清理端口
+check_and_kill_port() {
+    local port=${1:-5000}
+
+    print_info "检查端口 $port 使用情况..."
+
+    # 查找占用端口的进程
+    local pids=$(lsof -ti:$port 2>/dev/null)
+
+    if [[ -n "$pids" ]]; then
+        print_warning "端口 $port 被以下进程占用:"
+        lsof -i:$port 2>/dev/null | head -10
+
+        print_info "正在终止占用端口 $port 的进程..."
+
+        # 尝试优雅关闭
+        for pid in $pids; do
+            if kill -0 $pid 2>/dev/null; then
+                print_info "发送TERM信号给进程 $pid"
+                kill -TERM $pid 2>/dev/null
+            fi
+        done
+
+        # 等待2秒
+        sleep 2
+
+        # 检查是否还有进程占用端口
+        local remaining_pids=$(lsof -ti:$port 2>/dev/null)
+
+        if [[ -n "$remaining_pids" ]]; then
+            print_warning "强制终止剩余进程..."
+            for pid in $remaining_pids; do
+                if kill -0 $pid 2>/dev/null; then
+                    print_info "发送KILL信号给进程 $pid"
+                    kill -9 $pid 2>/dev/null
+                fi
+            done
+
+            # 再等待1秒
+            sleep 1
+        fi
+
+        # 最终检查
+        local final_pids=$(lsof -ti:$port 2>/dev/null)
+        if [[ -z "$final_pids" ]]; then
+            print_success "端口 $port 已清理完成"
+        else
+            print_error "无法清理端口 $port，请手动处理"
+            return 1
+        fi
+    else
+        print_success "端口 $port 可用"
+    fi
+
+    return 0
 }
 
 # 运行测试
@@ -108,17 +165,24 @@ run_tests() {
 # 启动服务
 start_service() {
     print_info "启动Flask服务..."
-    
+
     # 设置环境变量
     export FLASK_ENV=${FLASK_ENV:-development}
     export FLASK_HOST=${FLASK_HOST:-0.0.0.0}
     export FLASK_PORT=${FLASK_PORT:-5000}
-    
+
     print_info "服务配置:"
     print_info "  - 环境: $FLASK_ENV"
     print_info "  - 地址: $FLASK_HOST:$FLASK_PORT"
-    
+
+    # 检查并清理端口
+    if ! check_and_kill_port $FLASK_PORT; then
+        print_error "无法清理端口 $FLASK_PORT，启动失败"
+        exit 1
+    fi
+
     # 启动服务
+    print_info "正在启动Flask服务..."
     python run.py
 }
 
@@ -126,13 +190,14 @@ start_service() {
 show_help() {
     echo "统一Flask服务启动脚本"
     echo ""
-    echo "用法: $0 [选项]"
+    echo "用法: $0 [选项] [端口]"
     echo ""
     echo "选项:"
     echo "  start     启动服务（默认）"
     echo "  test      只运行测试"
     echo "  demo      运行演示脚本"
     echo "  install   只安装依赖"
+    echo "  kill      清理指定端口的进程"
     echo "  help      显示帮助信息"
     echo ""
     echo "环境变量:"
@@ -146,28 +211,65 @@ show_help() {
     echo "  FLASK_PORT=8080 $0          # 在8080端口启动"
     echo "  $0 test                     # 只运行测试"
     echo "  $0 demo                     # 运行API演示"
+    echo "  $0 kill 5000               # 清理5000端口"
+    echo "  $0 kill                     # 清理默认端口(5000)"
+    echo ""
+    echo "注意:"
+    echo "  - 启动服务时会自动清理端口占用"
+    echo "  - macOS用户如遇端口5000被占用，可能是AirPlay服务"
+    echo "  - 可在系统偏好设置->通用->隔空投送与接力中关闭AirPlay接收器"
 }
 
 # 运行演示
 run_demo() {
     print_info "运行API演示..."
-    
+
     # 检查服务是否运行
     port=${FLASK_PORT:-5000}
+
+    print_info "检查服务状态..."
     if ! curl -s "http://localhost:$port/health" > /dev/null; then
-        print_error "服务未运行，请先启动服务"
-        print_info "在另一个终端运行: $0 start"
+        print_error "服务未运行在端口 $port"
+
+        # 尝试检查其他常用端口
+        for test_port in 5001 5002 5003; do
+            if curl -s "http://localhost:$test_port/health" > /dev/null 2>&1; then
+                print_info "发现服务运行在端口 $test_port"
+                port=$test_port
+                break
+            fi
+        done
+
+        if ! curl -s "http://localhost:$port/health" > /dev/null; then
+            print_error "未找到运行中的服务，请先启动服务"
+            print_info "运行命令: $0 start"
+            exit 1
+        fi
+    fi
+
+    print_success "服务运行正常，端口: $port"
+    python demo.py "http://localhost:$port"
+}
+
+# 清理端口
+kill_port() {
+    local port=${2:-${FLASK_PORT:-5000}}
+
+    print_info "清理端口 $port..."
+
+    if check_and_kill_port $port; then
+        print_success "端口 $port 清理完成"
+    else
+        print_error "端口 $port 清理失败"
         exit 1
     fi
-    
-    python demo.py "http://localhost:$port"
 }
 
 # 主函数
 main() {
     echo "🚀 统一Flask服务启动脚本"
     echo "=================================="
-    
+
     case "${1:-start}" in
         "start")
             check_python
@@ -193,6 +295,9 @@ main() {
             install_dependencies
             check_env
             print_success "安装完成"
+            ;;
+        "kill")
+            kill_port "$@"
             ;;
         "help"|"-h"|"--help")
             show_help
