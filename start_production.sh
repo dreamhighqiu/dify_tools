@@ -94,44 +94,19 @@ check_conda() {
 # 检查依赖
 check_dependencies() {
     print_info "检查生产环境依赖..."
-
+    
     # 检查必要的包
     local required_packages=("flask" "gunicorn")
-    local missing_packages=()
-
+    
     for package in "${required_packages[@]}"; do
         if ! python -c "import $package" 2>/dev/null; then
-            missing_packages+=("$package")
+            print_error "缺少必要的包: $package"
+            print_info "请运行: pip install $package"
+            exit 1
         fi
     done
-
-    if [[ ${#missing_packages[@]} -gt 0 ]]; then
-        print_warning "缺少以下依赖包: ${missing_packages[*]}"
-
-        read -p "是否自动安装缺少的依赖? (Y/n): " -n 1 -r
-        echo
-
-        if [[ $REPLY =~ ^[Nn]$ ]]; then
-            print_error "请手动安装依赖: pip install ${missing_packages[*]}"
-            exit 1
-        else
-            print_info "正在安装缺少的依赖..."
-
-            for package in "${missing_packages[@]}"; do
-                print_info "安装 $package..."
-                if pip install "$package"; then
-                    print_success "$package 安装成功"
-                else
-                    print_error "$package 安装失败"
-                    exit 1
-                fi
-            done
-
-            print_success "所有依赖安装完成"
-        fi
-    else
-        print_success "依赖检查通过"
-    fi
+    
+    print_success "依赖检查通过"
 }
 
 # 创建日志目录
@@ -149,12 +124,12 @@ setup_logging() {
 # 检查并清理端口
 check_port() {
     print_info "检查端口 $FLASK_PORT..."
-    
+
     local pids=$(lsof -ti:$FLASK_PORT 2>/dev/null)
-    
+
     if [[ -n "$pids" ]]; then
         print_warning "端口 $FLASK_PORT 被占用，进程ID: $pids"
-        
+
         # 检查是否是我们的服务
         if [[ -f "$PID_FILE" ]]; then
             local old_pid=$(cat "$PID_FILE")
@@ -164,16 +139,48 @@ check_port() {
                 sleep 2
             fi
         fi
-        
+
         # 再次检查端口
         pids=$(lsof -ti:$FLASK_PORT 2>/dev/null)
         if [[ -n "$pids" ]]; then
-            print_error "端口 $FLASK_PORT 仍被占用，请手动处理"
-            exit 1
+            print_warning "强制清理端口 $FLASK_PORT 上的进程..."
+
+            # 尝试优雅关闭
+            for pid in $pids; do
+                if kill -0 $pid 2>/dev/null; then
+                    print_info "发送TERM信号给进程 $pid"
+                    kill -TERM $pid 2>/dev/null || true
+                fi
+            done
+
+            # 等待进程结束
+            sleep 3
+
+            # 检查是否还有进程
+            local remaining_pids=$(lsof -ti:$FLASK_PORT 2>/dev/null)
+            if [[ -n "$remaining_pids" ]]; then
+                print_warning "强制终止剩余进程..."
+                for pid in $remaining_pids; do
+                    if kill -0 $pid 2>/dev/null; then
+                        print_info "发送KILL信号给进程 $pid"
+                        kill -9 $pid 2>/dev/null || true
+                    fi
+                done
+
+                # 最后检查
+                sleep 1
+                local final_pids=$(lsof -ti:$FLASK_PORT 2>/dev/null)
+                if [[ -n "$final_pids" ]]; then
+                    print_error "无法清理端口 $FLASK_PORT，请手动处理: kill -9 $final_pids"
+                    exit 1
+                fi
+            fi
+
+            print_success "端口 $FLASK_PORT 已清理完成"
         fi
+    else
+        print_success "端口 $FLASK_PORT 可用"
     fi
-    
-    print_success "端口 $FLASK_PORT 可用"
 }
 
 # 启动服务
@@ -336,32 +343,6 @@ show_logs() {
     esac
 }
 
-# 安装依赖
-install_dependencies() {
-    print_info "安装生产环境依赖..."
-
-    # 检查conda环境
-    check_conda
-
-    # 安装基础依赖
-    print_info "安装项目依赖..."
-    if [[ -f "requirements.txt" ]]; then
-        pip install -r requirements.txt
-    else
-        print_warning "requirements.txt 文件不存在"
-    fi
-
-    # 安装生产环境专用依赖
-    local prod_packages=("gunicorn" "supervisor")
-
-    for package in "${prod_packages[@]}"; do
-        print_info "安装 $package..."
-        pip install "$package"
-    done
-
-    print_success "依赖安装完成"
-}
-
 # 显示帮助信息
 show_help() {
     echo "生产环境Flask服务管理脚本"
@@ -374,7 +355,6 @@ show_help() {
     echo "  restart   重启服务"
     echo "  status    查看服务状态"
     echo "  logs      查看日志 [access|error] [行数]"
-    echo "  install   安装生产环境依赖"
     echo "  config    显示配置信息"
     echo "  help      显示帮助信息"
     echo ""
@@ -390,7 +370,6 @@ show_help() {
     echo "  PID_FILE     PID文件路径 (默认: /tmp/flask_service.pid)"
     echo ""
     echo "示例:"
-    echo "  $0 install                  # 安装生产环境依赖"
     echo "  $0 start                    # 启动服务"
     echo "  $0 stop                     # 停止服务"
     echo "  $0 restart                  # 重启服务"
@@ -418,9 +397,6 @@ main() {
             ;;
         "logs")
             show_logs "${2:-error}" "${3:-50}"
-            ;;
-        "install")
-            install_dependencies
             ;;
         "config")
             show_config

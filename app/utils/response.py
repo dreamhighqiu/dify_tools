@@ -30,46 +30,43 @@ class ApiResponse:
     def success(data: Any = None, message: str = "操作成功", code: int = ResponseCode.SUCCESS):
         """
         成功响应
-        
+
         Args:
             data: 响应数据
             message: 响应消息
             code: HTTP状态码
-            
+
         Returns:
             Flask响应对象
         """
         response_data = {
             "success": True,
-            "code": code,
             "message": message,
-            "data": data,
-            "timestamp": None  # 可以添加时间戳
+            "result": data
         }
         return jsonify(response_data), code
     
     @staticmethod
-    def error(message: str = "操作失败", code: int = ResponseCode.BAD_REQUEST, 
+    def error(message: str = "操作失败", code: int = ResponseCode.BAD_REQUEST,
               error_type: str = None, details: Dict = None):
         """
         错误响应
-        
+
         Args:
             message: 错误消息
             code: HTTP状态码
             error_type: 错误类型
             details: 错误详情
-            
+
         Returns:
             Flask响应对象
         """
         response_data = {
             "success": False,
-            "code": code,
             "message": message,
+            "result": None,
             "error_type": error_type,
-            "details": details,
-            "timestamp": None  # 可以添加时间戳
+            "details": details
         }
         return jsonify(response_data), code
     

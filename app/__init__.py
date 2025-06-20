@@ -72,62 +72,62 @@ def register_error_handlers(app):
     def bad_request(error):
         return {
             "success": False,
-            "error": "Bad Request",
             "message": "请求参数错误",
-            "code": 400
+            "result": None,
+            "error_type": "bad_request"
         }, 400
-    
+
     @app.errorhandler(401)
     def unauthorized(error):
         return {
             "success": False,
-            "error": "Unauthorized",
             "message": "未授权访问",
-            "code": 401
+            "result": None,
+            "error_type": "unauthorized"
         }, 401
-    
+
     @app.errorhandler(403)
     def forbidden(error):
         return {
             "success": False,
-            "error": "Forbidden",
             "message": "禁止访问",
-            "code": 403
+            "result": None,
+            "error_type": "forbidden"
         }, 403
-    
+
     @app.errorhandler(404)
     def not_found(error):
         return {
             "success": False,
-            "error": "Not Found",
             "message": "接口不存在",
-            "code": 404
+            "result": None,
+            "error_type": "not_found"
         }, 404
-    
+
     @app.errorhandler(405)
     def method_not_allowed(error):
         return {
             "success": False,
-            "error": "Method Not Allowed",
             "message": "请求方法不允许",
-            "code": 405
+            "result": None,
+            "error_type": "method_not_allowed"
         }, 405
-    
+
     @app.errorhandler(429)
     def rate_limit_exceeded(error):
         return {
             "success": False,
-            "error": "Rate Limit Exceeded",
             "message": "请求频率超限",
-            "code": 429
+            "result": None,
+            "error_type": "rate_limit_exceeded"
         }, 429
-    
+
     @app.errorhandler(500)
     def internal_error(error):
         app.logger.error(f"服务器内部错误: {str(error)}")
         return {
             "success": False,
-            "error": "Internal Server Error",
             "message": "服务器内部错误",
-            "code": 500
+            "result": None,
+            "error_type": "internal_error"
         }, 500

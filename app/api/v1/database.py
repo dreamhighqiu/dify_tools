@@ -35,10 +35,9 @@ def execute_sql():
     响应:
     {
         "success": true,
-        "code": 200,
         "message": "SQL执行成功",
-        "data": {
-            "result": "查询结果或受影响行数",
+        "result": {
+            "data": "查询结果或受影响行数",
             "execution_time": 0.123,
             "row_count": 10,
             "sql": "执行的SQL语句"
@@ -104,7 +103,7 @@ def execute_sql():
         if result['success']:
             return ApiResponse.success(
                 data={
-                    "result": result['result'],
+                    "data": result['result'],
                     "execution_time": result.get('execution_time'),
                     "row_count": result.get('row_count'),
                     "sql": validated_data['sql']
@@ -143,9 +142,8 @@ def test_connection():
     响应:
     {
         "success": true,
-        "code": 200,
         "message": "连接测试成功",
-        "data": {
+        "result": {
             "connected": true,
             "server_version": "8.0.25",
             "response_time": 0.123

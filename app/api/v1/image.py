@@ -28,9 +28,8 @@ def generate_image():
     响应:
     {
         "success": true,
-        "code": 200,
         "message": "图像生成成功",
-        "data": {
+        "result": {
             "image_url": "生成的图像URL",
             "model": "使用的模型",
             "prompt": "使用的提示词",
@@ -105,9 +104,8 @@ def get_available_models():
     响应:
     {
         "success": true,
-        "code": 200,
         "message": "获取成功",
-        "data": {
+        "result": {
             "models": [
                 {
                     "name": "irag-1.0",
