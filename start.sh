@@ -1,6 +1,6 @@
 #!/bin/bash
-# 生产环境Flask服务启动脚本
-# 专为conda环境和生产部署设计
+# 统一Flask服务启动脚本 - 生产环境专用
+# 支持conda环境，自动端口清理，后台服务管理
 
 set -e
 
@@ -10,9 +10,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# 打印带颜色的消息
 print_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -41,8 +40,8 @@ FLASK_PORT=${FLASK_PORT:-"5000"}
 WORKERS=${WORKERS:-4}
 TIMEOUT=${TIMEOUT:-30}
 LOG_LEVEL=${LOG_LEVEL:-"info"}
-PID_FILE=${PID_FILE:-"/tmp/flask_service.pid"}
 LOG_DIR=${LOG_DIR:-"./logs"}
+PID_FILE=${PID_FILE:-"/tmp/flask_service.pid"}
 
 # 显示配置信息
 show_config() {
@@ -95,16 +94,20 @@ check_conda() {
 check_dependencies() {
     print_info "检查生产环境依赖..."
     
-    # 检查必要的包
     local required_packages=("flask" "gunicorn")
+    local missing_packages=()
     
     for package in "${required_packages[@]}"; do
         if ! python -c "import $package" 2>/dev/null; then
-            print_error "缺少必要的包: $package"
-            print_info "请运行: pip install $package"
-            exit 1
+            missing_packages+=("$package")
         fi
     done
+    
+    if [[ ${#missing_packages[@]} -gt 0 ]]; then
+        print_error "缺少以下依赖包: ${missing_packages[*]}"
+        print_info "请运行: pip install ${missing_packages[*]}"
+        exit 1
+    fi
     
     print_success "依赖检查通过"
 }
@@ -122,14 +125,16 @@ setup_logging() {
 }
 
 # 检查并清理端口
-check_port() {
-    print_info "检查端口 $FLASK_PORT..."
-
-    local pids=$(lsof -ti:$FLASK_PORT 2>/dev/null)
-
+check_and_kill_port() {
+    local port=${1:-5000}
+    
+    print_info "检查端口 $port 使用情况..."
+    
+    local pids=$(lsof -ti:$port 2>/dev/null)
+    
     if [[ -n "$pids" ]]; then
-        print_warning "端口 $FLASK_PORT 被占用，进程ID: $pids"
-
+        print_warning "端口 $port 被以下进程占用: $pids"
+        
         # 检查是否是我们的服务
         if [[ -f "$PID_FILE" ]]; then
             local old_pid=$(cat "$PID_FILE")
@@ -139,12 +144,12 @@ check_port() {
                 sleep 2
             fi
         fi
-
+        
         # 再次检查端口
-        pids=$(lsof -ti:$FLASK_PORT 2>/dev/null)
+        pids=$(lsof -ti:$port 2>/dev/null)
         if [[ -n "$pids" ]]; then
-            print_warning "强制清理端口 $FLASK_PORT 上的进程..."
-
+            print_warning "强制清理端口 $port 上的进程..."
+            
             # 尝试优雅关闭
             for pid in $pids; do
                 if kill -0 $pid 2>/dev/null; then
@@ -152,12 +157,12 @@ check_port() {
                     kill -TERM $pid 2>/dev/null || true
                 fi
             done
-
+            
             # 等待进程结束
             sleep 3
-
+            
             # 检查是否还有进程
-            local remaining_pids=$(lsof -ti:$FLASK_PORT 2>/dev/null)
+            local remaining_pids=$(lsof -ti:$port 2>/dev/null)
             if [[ -n "$remaining_pids" ]]; then
                 print_warning "强制终止剩余进程..."
                 for pid in $remaining_pids; do
@@ -166,21 +171,23 @@ check_port() {
                         kill -9 $pid 2>/dev/null || true
                     fi
                 done
-
+                
                 # 最后检查
                 sleep 1
-                local final_pids=$(lsof -ti:$FLASK_PORT 2>/dev/null)
+                local final_pids=$(lsof -ti:$port 2>/dev/null)
                 if [[ -n "$final_pids" ]]; then
-                    print_error "无法清理端口 $FLASK_PORT，请手动处理: kill -9 $final_pids"
+                    print_error "无法清理端口 $port，请手动处理: kill -9 $final_pids"
                     exit 1
                 fi
             fi
-
-            print_success "端口 $FLASK_PORT 已清理完成"
+            
+            print_success "端口 $port 已清理完成"
         fi
     else
-        print_success "端口 $FLASK_PORT 可用"
+        print_success "端口 $port 可用"
     fi
+    
+    return 0
 }
 
 # 启动服务
@@ -191,7 +198,7 @@ start_service() {
     check_conda
     check_dependencies
     setup_logging
-    check_port
+    check_and_kill_port $FLASK_PORT
     
     # 设置环境变量
     export FLASK_ENV="$FLASK_ENV"
@@ -210,16 +217,40 @@ start_service() {
         --error-logfile "$LOG_DIR/error.log" \
         --pid "$PID_FILE" \
         --daemon \
+        --preload \
+        --worker-class sync \
+        --max-requests 1000 \
+        --max-requests-jitter 100 \
         run:app
     
+    local gunicorn_exit_code=$?
+    
+    if [[ $gunicorn_exit_code -ne 0 ]]; then
+        print_error "Gunicorn启动失败，退出码: $gunicorn_exit_code"
+        print_info "检查错误日志: $LOG_DIR/error.log"
+        if [[ -f "$LOG_DIR/error.log" ]]; then
+            print_info "最近的错误日志:"
+            tail -n 10 "$LOG_DIR/error.log"
+        fi
+        exit 1
+    fi
+    
     # 检查启动状态
-    sleep 2
+    sleep 3
     if [[ -f "$PID_FILE" ]]; then
         local pid=$(cat "$PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
             print_success "服务启动成功，PID: $pid"
             print_info "访问地址: http://$FLASK_HOST:$FLASK_PORT"
             print_info "健康检查: http://$FLASK_HOST:$FLASK_PORT/health"
+            
+            # 健康检查
+            sleep 2
+            if curl -s "http://localhost:$FLASK_PORT/health" > /dev/null; then
+                print_success "健康检查通过 ✅"
+            else
+                print_warning "健康检查失败，请检查服务状态"
+            fi
         else
             print_error "服务启动失败"
             exit 1
@@ -345,7 +376,7 @@ show_logs() {
 
 # 显示帮助信息
 show_help() {
-    echo "生产环境Flask服务管理脚本"
+    echo "Flask生产环境服务管理脚本"
     echo ""
     echo "用法: $0 [命令] [选项]"
     echo ""
@@ -366,8 +397,6 @@ show_help() {
     echo "  WORKERS      Worker进程数 (默认: 4)"
     echo "  TIMEOUT      请求超时时间 (默认: 30)"
     echo "  LOG_LEVEL    日志级别 (默认: info)"
-    echo "  LOG_DIR      日志目录 (默认: ./logs)"
-    echo "  PID_FILE     PID文件路径 (默认: /tmp/flask_service.pid)"
     echo ""
     echo "示例:"
     echo "  $0 start                    # 启动服务"
