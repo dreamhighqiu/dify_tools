@@ -302,8 +302,21 @@ start_service() {
     # 先测试应用是否可以导入
     print_info "测试应用导入..."
     if ! python -c "from run import app; print('应用导入成功')" 2>/dev/null; then
-        print_error "应用导入失败，请检查代码"
-        print_info "尝试手动测试: python -c 'from run import app'"
+        print_error "应用导入失败，正在进行详细诊断..."
+
+        # 运行诊断脚本
+        if [[ -f "diagnose_import.py" ]]; then
+            print_info "运行导入诊断脚本..."
+            python diagnose_import.py
+        else
+            print_info "手动诊断步骤:"
+            echo "1. 检查Python环境: python --version"
+            echo "2. 检查当前目录: pwd && ls -la"
+            echo "3. 检查依赖: python -c 'import flask, pymysql, openai'"
+            echo "4. 测试导入: python -c 'from run import app'"
+        fi
+
+        print_error "请根据上述诊断信息修复问题后重试"
         exit 1
     fi
     print_success "应用导入测试通过"

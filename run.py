@@ -27,11 +27,12 @@ if __name__ == '__main__':
     app.logger.info(f"🎨 千帆模型: {app.config.get('QIANFAN_MODEL')}")
     app.logger.info(f"🌐 千帆端点: {app.config.get('QIANFAN_BASE_URL')}")
     app.logger.info("📋 可用接口:")
-    app.logger.info("   - GET  /health                    - 健康检查")
-    app.logger.info("   - POST /api/v1/image/generate     - 图像生成")
-    app.logger.info("   - GET  /api/v1/image/models       - 获取模型列表")
-    app.logger.info("   - POST /api/v1/database/execute   - SQL执行")
+    app.logger.info("   - GET  /health                         - 健康检查")
+    app.logger.info("   - POST /api/v1/image/generate          - 图像生成")
+    app.logger.info("   - GET  /api/v1/image/models            - 获取模型列表")
+    app.logger.info("   - POST /api/v1/database/execute        - SQL执行")
     app.logger.info("   - POST /api/v1/database/test-connection - 连接测试")
+    app.logger.info("   - POST /api/v1/database/network-test   - 网络测试")
     app.logger.info("=" * 60)
     
     # 启动应用

@@ -49,10 +49,12 @@ class DatabaseService:
             # 建立数据库连接
             connection = pymysql.connect(
                 **conn_params,
-                connect_timeout=timeout,
+                connect_timeout=max(timeout, 60),  # 最少60秒连接超时
                 read_timeout=timeout,
                 write_timeout=timeout,
-                cursorclass=pymysql.cursors.DictCursor
+                cursorclass=pymysql.cursors.DictCursor,
+                autocommit=True,  # 自动提交
+                ssl_disabled=True  # 禁用SSL以提高连接速度
             )
             
             with connection.cursor() as cursor:
@@ -144,8 +146,9 @@ class DatabaseService:
             # 建立数据库连接
             connection = pymysql.connect(
                 **conn_params,
-                connect_timeout=10,  # 连接测试使用较短超时
-                cursorclass=pymysql.cursors.DictCursor
+                connect_timeout=30,  # 连接测试使用30秒超时
+                cursorclass=pymysql.cursors.DictCursor,
+                ssl_disabled=True  # 禁用SSL以提高连接速度
             )
             
             # 获取服务器版本
