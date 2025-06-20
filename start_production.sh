@@ -94,19 +94,44 @@ check_conda() {
 # 检查依赖
 check_dependencies() {
     print_info "检查生产环境依赖..."
-    
+
     # 检查必要的包
     local required_packages=("flask" "gunicorn")
-    
+    local missing_packages=()
+
     for package in "${required_packages[@]}"; do
         if ! python -c "import $package" 2>/dev/null; then
-            print_error "缺少必要的包: $package"
-            print_info "请运行: pip install $package"
-            exit 1
+            missing_packages+=("$package")
         fi
     done
-    
-    print_success "依赖检查通过"
+
+    if [[ ${#missing_packages[@]} -gt 0 ]]; then
+        print_warning "缺少以下依赖包: ${missing_packages[*]}"
+
+        read -p "是否自动安装缺少的依赖? (Y/n): " -n 1 -r
+        echo
+
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            print_error "请手动安装依赖: pip install ${missing_packages[*]}"
+            exit 1
+        else
+            print_info "正在安装缺少的依赖..."
+
+            for package in "${missing_packages[@]}"; do
+                print_info "安装 $package..."
+                if pip install "$package"; then
+                    print_success "$package 安装成功"
+                else
+                    print_error "$package 安装失败"
+                    exit 1
+                fi
+            done
+
+            print_success "所有依赖安装完成"
+        fi
+    else
+        print_success "依赖检查通过"
+    fi
 }
 
 # 创建日志目录
@@ -311,6 +336,32 @@ show_logs() {
     esac
 }
 
+# 安装依赖
+install_dependencies() {
+    print_info "安装生产环境依赖..."
+
+    # 检查conda环境
+    check_conda
+
+    # 安装基础依赖
+    print_info "安装项目依赖..."
+    if [[ -f "requirements.txt" ]]; then
+        pip install -r requirements.txt
+    else
+        print_warning "requirements.txt 文件不存在"
+    fi
+
+    # 安装生产环境专用依赖
+    local prod_packages=("gunicorn" "supervisor")
+
+    for package in "${prod_packages[@]}"; do
+        print_info "安装 $package..."
+        pip install "$package"
+    done
+
+    print_success "依赖安装完成"
+}
+
 # 显示帮助信息
 show_help() {
     echo "生产环境Flask服务管理脚本"
@@ -323,6 +374,7 @@ show_help() {
     echo "  restart   重启服务"
     echo "  status    查看服务状态"
     echo "  logs      查看日志 [access|error] [行数]"
+    echo "  install   安装生产环境依赖"
     echo "  config    显示配置信息"
     echo "  help      显示帮助信息"
     echo ""
@@ -338,6 +390,7 @@ show_help() {
     echo "  PID_FILE     PID文件路径 (默认: /tmp/flask_service.pid)"
     echo ""
     echo "示例:"
+    echo "  $0 install                  # 安装生产环境依赖"
     echo "  $0 start                    # 启动服务"
     echo "  $0 stop                     # 停止服务"
     echo "  $0 restart                  # 重启服务"
@@ -365,6 +418,9 @@ main() {
             ;;
         "logs")
             show_logs "${2:-error}" "${3:-50}"
+            ;;
+        "install")
+            install_dependencies
             ;;
         "config")
             show_config
