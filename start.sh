@@ -34,6 +34,8 @@ print_header() {
 
 # 配置变量
 CONDA_ENV_NAME=${CONDA_ENV:-"venv312"}
+PYTHON_VENV_NAME=${PYTHON_VENV:-".venv"}
+USE_CONDA=${USE_CONDA:-"auto"}
 FLASK_ENV=${FLASK_ENV:-"production"}
 FLASK_HOST=${FLASK_HOST:-"0.0.0.0"}
 FLASK_PORT=${FLASK_PORT:-"5000"}
@@ -47,7 +49,18 @@ PID_FILE=${PID_FILE:-"/tmp/flask_service.pid"}
 show_config() {
     print_header "生产环境配置"
     echo "=================================="
-    echo "🐍 Conda环境: $CONDA_ENV_NAME"
+
+    # 检测环境类型
+    local env_type="未知"
+    if [[ "$CONDA_DEFAULT_ENV" != "" ]]; then
+        env_type="Conda: $CONDA_DEFAULT_ENV"
+    elif [[ "$VIRTUAL_ENV" != "" ]]; then
+        env_type="Python venv: $(basename $VIRTUAL_ENV)"
+    else
+        env_type="系统Python"
+    fi
+
+    echo "🐍 Python环境: $env_type"
     echo "🌍 Flask环境: $FLASK_ENV"
     echo "🌐 监听地址: $FLASK_HOST:$FLASK_PORT"
     echo "👥 Worker数量: $WORKERS"
@@ -58,34 +71,113 @@ show_config() {
     echo "=================================="
 }
 
-# 检查conda环境
-check_conda() {
-    print_info "检查conda环境..."
-    
+# 自动检测和激活Python环境
+check_and_activate_env() {
+    print_info "检测Python环境..."
+
+    # 检查当前是否已在虚拟环境中
+    if [[ "$CONDA_DEFAULT_ENV" != "" ]]; then
+        print_success "已在conda环境中: $CONDA_DEFAULT_ENV"
+        return 0
+    elif [[ "$VIRTUAL_ENV" != "" ]]; then
+        print_success "已在Python虚拟环境中: $(basename $VIRTUAL_ENV)"
+        return 0
+    fi
+
+    # 自动检测环境类型
+    if [[ "$USE_CONDA" == "auto" ]]; then
+        if command -v conda &> /dev/null && [[ -d "$HOME/miniconda3/envs/$CONDA_ENV_NAME" || -d "$HOME/anaconda3/envs/$CONDA_ENV_NAME" ]]; then
+            USE_CONDA="true"
+            print_info "检测到conda环境，将使用conda"
+        elif [[ -d "$PYTHON_VENV_NAME" ]]; then
+            USE_CONDA="false"
+            print_info "检测到Python虚拟环境，将使用venv"
+        else
+            print_warning "未检测到虚拟环境，将尝试使用系统Python"
+            return 0
+        fi
+    fi
+
+    if [[ "$USE_CONDA" == "true" ]]; then
+        activate_conda_env
+    else
+        activate_python_venv
+    fi
+}
+
+# 激活conda环境
+activate_conda_env() {
+    print_info "激活conda环境: $CONDA_ENV_NAME"
+
     if ! command -v conda &> /dev/null; then
-        print_error "conda命令不可用，请确保conda已正确安装"
+        print_error "conda命令不可用"
+        print_info "请确保conda已正确安装并添加到PATH"
         exit 1
     fi
-    
-    # 初始化conda
-    eval "$(conda shell.bash hook)"
-    
+
+    # 初始化conda（支持多种安装路径）
+    local conda_base=""
+    if [[ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
+        conda_base="$HOME/miniconda3"
+    elif [[ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]]; then
+        conda_base="$HOME/anaconda3"
+    elif [[ -f "/opt/miniconda3/etc/profile.d/conda.sh" ]]; then
+        conda_base="/opt/miniconda3"
+    elif [[ -f "/opt/anaconda3/etc/profile.d/conda.sh" ]]; then
+        conda_base="/opt/anaconda3"
+    fi
+
+    if [[ -n "$conda_base" ]]; then
+        source "$conda_base/etc/profile.d/conda.sh"
+    else
+        eval "$(conda shell.bash hook)" 2>/dev/null || true
+    fi
+
     # 检查环境是否存在
-    if ! conda env list | grep -q "^$CONDA_ENV_NAME "; then
+    if ! conda env list 2>/dev/null | grep -q "^$CONDA_ENV_NAME "; then
         print_error "conda环境 '$CONDA_ENV_NAME' 不存在"
         print_info "可用的conda环境:"
-        conda env list
+        conda env list 2>/dev/null || echo "无法获取环境列表"
+        print_info "请创建环境: conda create -n $CONDA_ENV_NAME python=3.12"
         exit 1
     fi
-    
+
     # 激活环境
-    print_info "激活conda环境: $CONDA_ENV_NAME"
-    conda activate "$CONDA_ENV_NAME"
-    
+    conda activate "$CONDA_ENV_NAME" 2>/dev/null
+
     if [[ "$CONDA_DEFAULT_ENV" == "$CONDA_ENV_NAME" ]]; then
         print_success "conda环境激活成功: $CONDA_DEFAULT_ENV"
     else
         print_error "conda环境激活失败"
+        print_info "请手动激活: conda activate $CONDA_ENV_NAME"
+        exit 1
+    fi
+}
+
+# 激活Python虚拟环境
+activate_python_venv() {
+    print_info "激活Python虚拟环境: $PYTHON_VENV_NAME"
+
+    if [[ ! -d "$PYTHON_VENV_NAME" ]]; then
+        print_warning "Python虚拟环境不存在: $PYTHON_VENV_NAME"
+        print_info "创建Python虚拟环境..."
+
+        if ! command -v python3 &> /dev/null; then
+            print_error "python3命令不可用"
+            exit 1
+        fi
+
+        python3 -m venv "$PYTHON_VENV_NAME"
+        print_success "Python虚拟环境创建成功"
+    fi
+
+    # 激活环境
+    source "$PYTHON_VENV_NAME/bin/activate"
+
+    if [[ "$VIRTUAL_ENV" != "" ]]; then
+        print_success "Python虚拟环境激活成功: $(basename $VIRTUAL_ENV)"
+    else
+        print_error "Python虚拟环境激活失败"
         exit 1
     fi
 }
@@ -195,7 +287,7 @@ start_service() {
     print_header "启动生产服务"
     
     # 检查环境
-    check_conda
+    check_and_activate_env
     check_dependencies
     setup_logging
     check_and_kill_port $FLASK_PORT
@@ -206,8 +298,26 @@ start_service() {
     export FLASK_PORT="$FLASK_PORT"
     
     print_info "启动Gunicorn服务器..."
-    
+
+    # 先测试应用是否可以导入
+    print_info "测试应用导入..."
+    if ! python -c "from run import app; print('应用导入成功')" 2>/dev/null; then
+        print_error "应用导入失败，请检查代码"
+        print_info "尝试手动测试: python -c 'from run import app'"
+        exit 1
+    fi
+    print_success "应用导入测试通过"
+
+    # 测试gunicorn配置
+    print_info "测试Gunicorn配置..."
+    if ! gunicorn --check-config run:app 2>/dev/null; then
+        print_warning "Gunicorn配置检查失败，但继续尝试启动"
+    else
+        print_success "Gunicorn配置检查通过"
+    fi
+
     # 启动gunicorn
+    print_info "启动Gunicorn进程..."
     gunicorn \
         --bind "$FLASK_HOST:$FLASK_PORT" \
         --workers "$WORKERS" \
@@ -222,16 +332,41 @@ start_service() {
         --max-requests 1000 \
         --max-requests-jitter 100 \
         run:app
-    
+
     local gunicorn_exit_code=$?
-    
+
     if [[ $gunicorn_exit_code -ne 0 ]]; then
         print_error "Gunicorn启动失败，退出码: $gunicorn_exit_code"
-        print_info "检查错误日志: $LOG_DIR/error.log"
+
+        # 详细的错误诊断
+        print_info "进行错误诊断..."
+
+        # 检查Python环境
+        print_info "Python信息:"
+        echo "  - Python版本: $(python --version)"
+        echo "  - Python路径: $(which python)"
+        echo "  - 当前目录: $(pwd)"
+
+        # 检查依赖
+        print_info "检查关键依赖:"
+        for pkg in flask gunicorn; do
+            if python -c "import $pkg; print(f'  - $pkg: {$pkg.__version__}')" 2>/dev/null; then
+                :
+            else
+                echo "  - $pkg: 未安装或导入失败"
+            fi
+        done
+
+        # 检查错误日志
         if [[ -f "$LOG_DIR/error.log" ]]; then
             print_info "最近的错误日志:"
             tail -n 10 "$LOG_DIR/error.log"
         fi
+
+        # 尝试前台启动获取更多信息
+        print_info "尝试前台启动获取详细错误信息..."
+        timeout 10s gunicorn --bind "$FLASK_HOST:$FLASK_PORT" --workers 1 run:app || true
+
         exit 1
     fi
     
@@ -390,7 +525,9 @@ show_help() {
     echo "  help      显示帮助信息"
     echo ""
     echo "环境变量:"
+    echo "  USE_CONDA    使用环境类型 (auto/true/false, 默认: auto)"
     echo "  CONDA_ENV    conda环境名称 (默认: venv312)"
+    echo "  PYTHON_VENV  Python venv路径 (默认: .venv)"
     echo "  FLASK_ENV    Flask环境 (默认: production)"
     echo "  FLASK_HOST   监听地址 (默认: 0.0.0.0)"
     echo "  FLASK_PORT   监听端口 (默认: 5000)"
@@ -399,7 +536,11 @@ show_help() {
     echo "  LOG_LEVEL    日志级别 (默认: info)"
     echo ""
     echo "示例:"
-    echo "  $0 start                    # 启动服务"
+    echo "  $0 start                    # 自动检测环境并启动"
+    echo "  USE_CONDA=true $0 start     # 强制使用conda环境"
+    echo "  USE_CONDA=false $0 start    # 强制使用Python venv"
+    echo "  CONDA_ENV=myenv $0 start    # 使用指定conda环境"
+    echo "  PYTHON_VENV=venv $0 start   # 使用指定Python venv"
     echo "  $0 stop                     # 停止服务"
     echo "  $0 restart                  # 重启服务"
     echo "  $0 status                   # 查看状态"
