@@ -43,21 +43,117 @@ check_python() {
 # 检查虚拟环境
 check_venv() {
     print_info "检查虚拟环境..."
-    
-    if [[ "$VIRTUAL_ENV" != "" ]]; then
-        print_success "虚拟环境已激活: $VIRTUAL_ENV"
-    else
-        print_warning "虚拟环境未激活"
-        
-        if [[ -d "venv" ]]; then
-            print_info "发现虚拟环境目录，尝试激活..."
-            source venv/bin/activate
-            print_success "虚拟环境已激活"
+
+    # 检查是否指定了conda环境
+    local conda_env=${CONDA_ENV:-"venv312"}
+    local use_conda=${USE_CONDA:-"auto"}
+
+    # 自动检测环境类型
+    if [[ "$use_conda" == "auto" ]]; then
+        if command -v conda &> /dev/null; then
+            use_conda="true"
+            print_info "检测到conda，将使用conda环境"
         else
-            print_info "创建虚拟环境..."
-            python3 -m venv venv
-            source venv/bin/activate
-            print_success "虚拟环境已创建并激活"
+            use_conda="false"
+            print_info "未检测到conda，将使用Python venv"
+        fi
+    fi
+
+    if [[ "$use_conda" == "true" ]]; then
+        # 使用conda环境
+        check_conda_env "$conda_env"
+    else
+        # 使用传统venv环境
+        check_python_venv
+    fi
+}
+
+# 检查conda环境
+check_conda_env() {
+    local env_name=$1
+
+    print_info "使用conda环境: $env_name"
+
+    # 检查conda是否可用
+    if ! command -v conda &> /dev/null; then
+        print_error "conda命令不可用，请确保conda已正确安装"
+        exit 1
+    fi
+
+    # 检查当前激活的环境
+    if [[ "$CONDA_DEFAULT_ENV" == "$env_name" ]]; then
+        print_success "conda环境已激活: $CONDA_DEFAULT_ENV"
+        return 0
+    fi
+
+    # 检查环境是否存在
+    if conda env list | grep -q "^$env_name "; then
+        print_info "激活conda环境: $env_name"
+
+        # 初始化conda（如果需要）
+        if [[ -z "$CONDA_EXE" ]]; then
+            eval "$(conda shell.bash hook)"
+        fi
+
+        conda activate "$env_name"
+
+        if [[ "$CONDA_DEFAULT_ENV" == "$env_name" ]]; then
+            print_success "conda环境激活成功: $env_name"
+        else
+            print_error "conda环境激活失败"
+            exit 1
+        fi
+    else
+        print_warning "conda环境 '$env_name' 不存在"
+        print_info "可用的conda环境:"
+        conda env list
+
+        read -p "是否创建新的conda环境 '$env_name'? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            create_conda_env "$env_name"
+        else
+            print_error "请手动创建conda环境或指定现有环境"
+            exit 1
+        fi
+    fi
+}
+
+# 创建conda环境
+create_conda_env() {
+    local env_name=$1
+
+    print_info "创建conda环境: $env_name"
+
+    # 创建环境（Python 3.12）
+    conda create -n "$env_name" python=3.12 -y
+
+    if [[ $? -eq 0 ]]; then
+        print_success "conda环境创建成功: $env_name"
+        conda activate "$env_name"
+        print_success "conda环境激活成功: $env_name"
+    else
+        print_error "conda环境创建失败"
+        exit 1
+    fi
+}
+
+# 检查Python venv环境
+check_python_venv() {
+    if [[ "$VIRTUAL_ENV" != "" ]]; then
+        print_success "Python虚拟环境已激活: $VIRTUAL_ENV"
+    else
+        print_warning "Python虚拟环境未激活"
+
+        if [[ -d ".venv" ]]; then
+            print_info "发现虚拟环境目录，尝试激活..."
+            source .venv/bin/activate
+            print_success "Python虚拟环境已激活"
+        else
+            print_info "创建Python虚拟环境..."
+            python3 -m venv .venv
+            source .venv/bin/activate
+            print_success "Python虚拟环境已创建并激活"
         fi
     fi
 }
@@ -204,11 +300,15 @@ show_help() {
     echo "  FLASK_ENV    运行环境 (development/testing/production)"
     echo "  FLASK_HOST   监听地址 (默认: 0.0.0.0)"
     echo "  FLASK_PORT   监听端口 (默认: 5000)"
+    echo "  USE_CONDA    使用conda环境 (true/false/auto, 默认: auto)"
+    echo "  CONDA_ENV    conda环境名称 (默认: venv312)"
     echo ""
     echo "示例:"
     echo "  $0 start                    # 启动开发服务器"
     echo "  FLASK_ENV=production $0     # 启动生产服务器"
     echo "  FLASK_PORT=8080 $0          # 在8080端口启动"
+    echo "  USE_CONDA=true $0           # 强制使用conda环境"
+    echo "  CONDA_ENV=myenv $0          # 使用指定的conda环境"
     echo "  $0 test                     # 只运行测试"
     echo "  $0 demo                     # 运行API演示"
     echo "  $0 kill 5000               # 清理5000端口"
